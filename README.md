@@ -52,7 +52,7 @@ A TypeScript-based MCP server that exposes Unity Editor functionality through st
 
 1. Copy the `UnityMCPPlugin` folder to your Unity project's Assets directory
 2. Open Unity Editor
-3. Access the plugin through Window > UnityMCP > Debug Window
+3. Access the plugin through Unity's top menu bar > UnityMCP > Debug Window
 
 ### MCP Server Setup
 
