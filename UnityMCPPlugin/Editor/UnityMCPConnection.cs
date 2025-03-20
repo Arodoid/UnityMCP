@@ -248,12 +248,106 @@ namespace UnityMCP.Editor
                     case "executeEditorCommand":
                         ExecuteEditorCommand(data["data"].ToString());
                         break;
+                    case "executeMenuItem":
+                        ExecuteMenuItem(data["data"].ToString());
+                        break;
                 }
             }
             catch (Exception e)
             {
                 Debug.LogError($"Error handling message: {e.Message}");
             }
+        }
+
+        private static void ExecuteMenuItem(string menuItemData)
+        {
+            var logs = new List<string>();
+            var errors = new List<string>();
+            var warnings = new List<string>();
+
+            Application.logMessageReceived += LogHandler;
+
+            try
+            {
+                var menuDataObj = JsonConvert.DeserializeObject<MenuItemData>(menuItemData);
+                var menuPath = menuDataObj.menuPath;
+
+                Debug.Log($"[UnityMCP] Executing menu item: {menuPath}");
+                
+                bool success = EditorApplication.ExecuteMenuItem(menuPath);
+                
+                var resultMessage = JsonConvert.SerializeObject(new
+                {
+                    type = "menuItemResult",
+                    data = new
+                    {
+                        success = success,
+                        message = success 
+                            ? $"Successfully executed menu item: {menuPath}" 
+                            : $"Failed to execute menu item: {menuPath}",
+                        logs = logs,
+                        warnings = warnings,
+                        errors = errors
+                    }
+                });
+                
+                var buffer = Encoding.UTF8.GetBytes(resultMessage);
+                webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cts.Token).Wait();
+            }
+            catch (Exception e)
+            {
+                var error = $"[UnityMCP] Failed to execute menu item: {e.Message}\n{e.StackTrace}";
+                Debug.LogError(error);
+
+                // Send back error information
+                var errorMessage = JsonConvert.SerializeObject(new
+                {
+                    type = "menuItemResult",
+                    data = new
+                    {
+                        success = false,
+                        message = $"Error executing menu item: {e.Message}",
+                        logs = logs,
+                        errors = new List<string>(errors) { error },
+                        warnings = warnings,
+                        errorDetails = new
+                        {
+                            message = e.Message,
+                            stackTrace = e.StackTrace,
+                            type = e.GetType().Name
+                        }
+                    }
+                });
+                
+                var buffer = Encoding.UTF8.GetBytes(errorMessage);
+                webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cts.Token).Wait();
+            }
+            finally
+            {
+                Application.logMessageReceived -= LogHandler;
+            }
+
+            void LogHandler(string logMessage, string stackTrace, LogType type)
+            {
+                switch (type)
+                {
+                    case LogType.Log:
+                        logs.Add(logMessage);
+                        break;
+                    case LogType.Warning:
+                        warnings.Add(logMessage);
+                        break;
+                    case LogType.Error:
+                    case LogType.Exception:
+                        errors.Add($"{logMessage}\n{stackTrace}");
+                        break;
+                }
+            }
+        }
+
+        private class MenuItemData
+        {
+            public string menuPath { get; set; }
         }
 
         private static void ExecuteEditorCommand(string commandData)
