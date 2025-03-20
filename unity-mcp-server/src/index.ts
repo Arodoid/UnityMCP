@@ -138,6 +138,7 @@ class UnityMCPServer {
         break;
       
       case 'commandResult':
+      case 'menuItemResult':
         // Resolve the pending command result promise
         if (this.commandResultPromise) {
           this.commandResultPromise.resolve(message.data);
@@ -190,6 +191,50 @@ class UnityMCPServer {
               description: 'Get only script files',
               input: { format: 'scripts only' },
               output: '["Assets/Scripts/Player.cs", "Assets/Scripts/Enemy.cs"]'
+            }
+          ]
+        },
+        {
+          name: 'execute_menu_item',
+          description: 'Execute a Unity menu item by path. This allows you to trigger any menu command available in the Unity Editor, such as creating objects, running menu commands, or executing editor functions.',
+          category: 'Editor Control',
+          tags: ['unity', 'editor', 'menu', 'command'],
+          inputSchema: {
+            type: 'object',
+            properties: {
+              menuPath: {
+                type: 'string',
+                description: 'The path to the menu item to execute (e.g. "GameObject/Create Empty" or "Window/Package Manager")',
+                minLength: 1,
+                examples: [
+                  'GameObject/Create Empty',
+                  'Window/Package Manager',
+                  'Assets/Create/C# Script'
+                ]
+              }
+            },
+            required: ['menuPath'],
+            additionalProperties: false
+          },
+          returns: {
+            type: 'object',
+            description: 'Returns the execution result including success status and message',
+            format: 'JSON object containing "success" and "message" fields'
+          },
+          examples: [
+            {
+              description: 'Create an empty GameObject',
+              input: {
+                menuPath: 'GameObject/Create Empty'
+              },
+              output: '{ "success": true, "message": "Successfully executed menu item: GameObject/Create Empty" }'
+            },
+            {
+              description: 'Open Package Manager',
+              input: {
+                menuPath: 'Window/Package Manager'
+              },
+              output: '{ "success": true, "message": "Successfully executed menu item: Window/Package Manager" }'
             }
           ]
         },
@@ -346,7 +391,7 @@ class UnityMCPServer {
       const { name, arguments: args } = request.params;
 
       // Validate tool exists with helpful error message
-      const availableTools = ['get_editor_state', 'execute_editor_command', 'get_logs'];
+      const availableTools = ['get_editor_state', 'execute_editor_command', 'execute_menu_item', 'get_logs'];
       if (!availableTools.includes(name)) {
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -399,6 +444,76 @@ class UnityMCPServer {
             throw new McpError(
               ErrorCode.InternalError,
               `Failed to process editor state: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
+          }
+        }
+
+        case 'execute_menu_item': {
+          // Validate menuPath parameter
+          if (!args?.menuPath) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              'The menuPath parameter is required'
+            );
+          }
+          
+          if (typeof args.menuPath !== 'string') {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              'The menuPath parameter must be a string'
+            );
+          }
+
+          if (args.menuPath.trim().length === 0) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              'The menuPath parameter cannot be empty'
+            );
+          }
+
+          try {
+            // Send command to Unity
+            this.unityConnection.send(JSON.stringify({
+              type: 'executeMenuItem',
+              data: { menuPath: args.menuPath },
+            }));
+
+            // Wait for result with timeout handling
+            const timeoutMs = 5000;
+            const result = await Promise.race([
+              new Promise((resolve, reject) => {
+                this.commandResultPromise = { resolve, reject };
+              }),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(
+                  `Menu item execution timed out after ${timeoutMs/1000} seconds. This may indicate a long-running menu operation or that the menu item doesn't exist.`
+                )), timeoutMs)
+              )
+            ]);
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            // Enhanced error handling
+            if (error instanceof Error) {
+              if (error.message.includes('timed out')) {
+                throw new McpError(
+                  ErrorCode.InternalError,
+                  error.message
+                );
+              }
+            }
+
+            // Generic error fallback
+            throw new McpError(
+              ErrorCode.InternalError,
+              `Failed to execute menu item: ${error instanceof Error ? error.message : 'Unknown error'}`
             );
           }
         }
